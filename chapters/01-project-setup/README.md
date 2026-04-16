@@ -321,7 +321,7 @@ pnpm dev
 🔌 Ollama 서버 연결 확인 중...
 ✅ Ollama 서버 연결 성공
 
-🤖 모델: gemma4:2b
+🤖 모델: gemma4:e2b
 
 👤 User: 안녕! 너는 누구야? 한 문장으로 답해줘.
 🤖 Assistant: 저는 Google DeepMind에서 개발한 대규모 언어 모델인 Gemma 4입니다.
