@@ -1,9 +1,11 @@
 // src/index.ts
 
 import { CliOptions, parseCli } from "./cli.js";
+import { collectContext } from "./context.js";
 import { Conversation } from "./conversation.js";
 import { checkConnection, listModels } from "./ollama.js";
 import { query } from "./query.js";
+import { buildSystemPrompt } from "./system-prompt.js";
 
 async function main() {
   const options = parseCli();
@@ -49,7 +51,9 @@ async function runCli(options: CliOptions & { prompt: string }) {
     prompt = `${stdinData}\n\n---\n\n${prompt}`;
   }
 
-  const conversation = new Conversation(options.system);
+  const context = collectContext();
+  const systemPrompt = buildSystemPrompt(context, options.system);
+  const conversation = new Conversation(systemPrompt);
   conversation.addUser(prompt);
 
   for await (const event of query({ model: options.model, conversation })) {
