@@ -89,7 +89,7 @@ export const AssistantMessageSchema = z.object({
 export const ToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
-  arguments: z.record(z.unknown()),
+  arguments: z.record(z.string(), z.unknown()),
 });
 
 export const ToolResultMessageSchema = z.object({
