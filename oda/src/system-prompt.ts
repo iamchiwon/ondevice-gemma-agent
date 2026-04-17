@@ -7,6 +7,7 @@
 // AI가 현재 프로젝트 상황을 파악할 수 있게 한다.
 
 import type { Context } from "./context.js";
+import { toolRegistry } from "./tools/index.js";
 
 /**
  * 시스템 프롬프트를 조립한다.
@@ -30,6 +31,28 @@ export function buildSystemPrompt(
     "You help with reading, writing, and understanding code.",
     "Be concise and direct. When you're not sure, say so.",
   );
+
+  // ── 도구 목록 ─────────────────────────────────────
+  const tools = toolRegistry.getAll();
+  if (tools.length > 0) {
+    sections.push("\n## Available Tools");
+    sections.push(
+      "You can use the following tools to help answer questions.\n",
+    );
+    sections.push("To use a tool, respond with this EXACT format:");
+    sections.push("```");
+    sections.push("<tool_call>");
+    sections.push('{"name": "ToolName", "arguments": {"param": "value"}}');
+    sections.push("</tool_call>");
+    sections.push("```\n");
+    sections.push(
+      "After the tool result is provided, continue your response.\n",
+    );
+    sections.push("Available tools:");
+    for (const tool of tools) {
+      sections.push(`- **${tool.name}**: ${tool.description}`);
+    }
+  }
 
   // ── 날짜 ──────────────────────────────────────────────
   sections.push(`\nToday: ${context.project.today}`);
