@@ -1,5 +1,11 @@
 // src/tools/index.ts
 
+export {
+  executeTool,
+  executeToolBatch,
+  type PipelineOptions,
+  type PipelineResult,
+} from "./pipeline.js";
 export { toolRegistry } from "./registry.js";
 export { registerTools } from "./setup.js";
 export { toolToOllamaDefinition } from "./types.js";
