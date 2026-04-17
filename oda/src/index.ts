@@ -1,12 +1,9 @@
 // src/index.ts
 
 import { CliOptions, parseCli } from "./cli.js";
-import {
-  chat,
-  checkConnection,
-  listModels,
-  type OllamaMessage,
-} from "./ollama.js";
+import { Conversation } from "./conversation.js";
+import { checkConnection, listModels } from "./ollama.js";
+import { query } from "./query.js";
 
 async function main() {
   const options = parseCli();
@@ -52,23 +49,31 @@ async function runCli(options: CliOptions & { prompt: string }) {
     prompt = `${stdinData}\n\n---\n\n${prompt}`;
   }
 
-  const messages: OllamaMessage[] = [];
-  if (options.system) {
-    messages.push({ role: "system", content: options.system });
+  const conversation = new Conversation(options.system);
+  conversation.addUser(prompt);
+
+  for await (const event of query({ model: options.model, conversation })) {
+    switch (event.type) {
+      case "text_delta":
+        if (options.stream) {
+          process.stdout.write(event.content);
+        }
+        break;
+
+      case "response_complete":
+        if (!options.stream) {
+          console.log(event.content);
+        }
+        break;
+
+      case "error":
+        console.error(`❌ ${event.message}`);
+        process.exit(1);
+    }
   }
-  messages.push({ role: "user", content: prompt });
 
   if (options.stream) {
-    await chat({ model: options.model, messages }, (chunk) => {
-      if (!chunk.done) process.stdout.write(chunk.message.content);
-    });
     process.stdout.write("\n");
-  } else {
-    let result = "";
-    await chat({ model: options.model, messages }, (chunk) => {
-      if (!chunk.done) result += chunk.message.content;
-    });
-    console.log(result);
   }
 }
 

@@ -3,7 +3,7 @@
 import { Box, Text, useApp, useInput } from "ink";
 import { useCallback, useState } from "react";
 import { Conversation } from "../conversation.js";
-import { chat } from "../ollama.js";
+import { query } from "../query.js";
 import type { Message, SessionStats } from "../schemas.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
@@ -53,46 +53,37 @@ export function App({ model, system }: Props) {
       setIsLoading(true);
       setStreamingText("");
 
-      // 2. Ollama API 호출
-      const apiMessages = conversation.toOllamaMessages();
-
-      // 3. 스트리밍 호출
-      let fullResponse = "";
-      const startTime = Date.now();
-      let tokenCount = 0;
-
+      // 2. 쿼리 루프 실행
+      // 이전: chat()을 직접 호출하고 콜백으로 상태 관리
+      // 이후: query() 제너레이터를 for-await-of로 소비
       try {
-        await chat({ model, messages: apiMessages }, (chunk) => {
-          if (!chunk.done) {
-            fullResponse += chunk.message.content;
-            setStreamingText(fullResponse);
-          } else {
-            tokenCount = chunk.eval_count ?? 0;
+        for await (const event of query({ model, conversation })) {
+          switch (event.type) {
+            case "text_delta":
+              setStreamingText((prev) => prev + event.content);
+              break;
+
+            case "response_complete":
+              setMessages(conversation.getMessages());
+              setStreamingText("");
+              break;
+
+            case "turn_complete":
+              setStats(conversation.getStats());
+              break;
+
+            case "error":
+              conversation.addAssistant(`❌ 에러: ${event.message}`);
+              setMessages(conversation.getMessages());
+              break;
           }
-        });
-
-        // 4. 완성된 응답 추가
-        conversation.addAssistant(fullResponse);
-        setMessages(conversation.getMessages());
-
-        // 5. 통계 갱신
-        const elapsed = (Date.now() - startTime) / 1000;
-        conversation.updateStats(tokenCount, elapsed);
-        setStats(conversation.getStats());
-      } catch (error) {
-        // 에러를 어시스턴트 메시지로 표시
-        const errorMessage =
-          error instanceof Error ? error.message : "알 수 없는 에러";
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `❌ 에러: ${errorMessage}` },
-        ]);
+        }
       } finally {
         setIsLoading(false);
         setStreamingText("");
       }
     },
-    [messages, isLoading, model, system],
+    [messages, isLoading, model],
   );
 
   // ── 렌더링 ────────────────────────────────────────────
