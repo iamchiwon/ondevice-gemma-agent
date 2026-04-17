@@ -15,7 +15,12 @@ import type { Conversation } from "./conversation.js";
 import type { QueryEvent } from "./events.js";
 import { chat } from "./ollama.js";
 import { ToolCall } from "./schemas.js";
-import { Tool, toolRegistry } from "./tools/index.js";
+import {
+  executeToolBatch,
+  PipelineOptions,
+  Tool,
+  toolRegistry,
+} from "./tools/index.js";
 
 /** query() 함수의 옵션 */
 export interface QueryOptions {
@@ -195,65 +200,61 @@ export async function* query(
       arguments: tc.arguments,
     }));
 
-    conversation.addAssistantWithToolCalls(fullResponse, toolCallSchemas);
+    conversation.addAssistantWithToolCalls(
+      fullResponse,
+      toolCallSchemas.map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments,
+      })),
+    );
 
+    // 도구 호출 이벤트 방출
     for (const tc of toolCallSchemas) {
-      // 1. 도구 찾기
-      const tool = tools.find((t) => t.name === tc.name);
-
       yield {
-        type: "tool_call",
+        type: "tool_call" as const,
         id: tc.id,
         name: tc.name,
         arguments: tc.arguments,
       };
+    }
 
-      let result: { content: string; isError: boolean };
+    // 배치 실행
+    const pipelineOptions: PipelineOptions = { tools };
+    const results: Array<{
+      id: string;
+      name: string;
+      content: string;
+      isError: boolean;
+    }> = [];
 
-      if (!tool) {
-        result = { content: `Unknown tool: ${tc.name}`, isError: true };
-      } else {
-        try {
-          // 2. 입력 검증
-          const parsed = tool.inputSchema.safeParse(tc.arguments);
-          if (!parsed.success) {
-            result = {
-              content: `Invalid input: ${parsed.error.message}`,
-              isError: true,
-            };
-          } else {
-            // 3. 실행
-            const toolResult = await tool.call(
-              parsed.data as Record<string, unknown>,
-            );
-            result = {
-              content: toolResult.content,
-              isError: toolResult.isError ?? false,
-            };
-          }
-        } catch (error) {
-          result = {
-            content: `Tool error: ${error instanceof Error ? error.message : String(error)}`,
-            isError: true,
-          };
-        }
-      }
+    await executeToolBatch(
+      toolCallSchemas,
+      pipelineOptions,
+      (id, name, result) => {
+        conversation.addToolResult(id, result.content, result.isError);
+        results.push({
+          id,
+          name,
+          content: result.content,
+          isError: result.isError,
+        });
+      },
+    );
 
-      // 결과를 대화에 추가
-      conversation.addToolResult(tc.id, result.content, result.isError);
-
+    // 도구 결과 이벤트 방출
+    for (const r of results) {
       yield {
-        type: "tool_result",
-        toolCallId: tc.id,
-        name: tc.name,
-        content: result.content,
-        isError: result.isError,
+        type: "tool_result" as const,
+        toolCallId: r.id,
+        name: r.name,
+        content: r.content,
+        isError: r.isError,
       };
     }
 
-    yield { type: "turn_complete", tokens: tokenCount, elapsed };
+    yield { type: "turn_complete" as const, tokens: tokenCount, elapsed };
 
-    // 다음 턴으로 → for 루프 처음으로 돌아감
-    // 도구 결과가 대화에 추가된 상태로 다시 API 호출
+    // 다음 턴으로 (for 루프 계속)
   }
 }
