@@ -6,6 +6,7 @@
 // 시스템 프롬프트에 Git 컨텍스트와 사용자 컨텍스트를 주입하여
 // AI가 현재 프로젝트 상황을 파악할 수 있게 한다.
 
+import z from "zod";
 import type { Context } from "./context.js";
 import { toolRegistry } from "./tools/index.js";
 
@@ -35,22 +36,44 @@ export function buildSystemPrompt(
   // ── 도구 목록 ─────────────────────────────────────
   const tools = toolRegistry.getAll();
   if (tools.length > 0) {
-    sections.push("\n## Available Tools");
+    sections.push("\n## Tools");
     sections.push(
-      "You can use the following tools to help answer questions.\n",
+      "You have access to tools. To use a tool, write EXACTLY this format:\n",
     );
-    sections.push("To use a tool, respond with this EXACT format:");
-    sections.push("```");
-    sections.push("<tool_call>");
-    sections.push('{"name": "ToolName", "arguments": {"param": "value"}}');
-    sections.push("</tool_call>");
-    sections.push("```\n");
+    sections.push("USE_TOOL: ToolName");
+    sections.push("param1: value1");
+    sections.push("param2: value2");
+    sections.push("END_TOOL\n");
+    sections.push("Example:");
+    sections.push("USE_TOOL: FileRead");
+    sections.push("path: src/index.ts");
+    sections.push("END_TOOL\n");
+    sections.push("Rules:");
+    sections.push("- Write USE_TOOL and END_TOOL on their own lines");
+    sections.push("- One parameter per line in key: value format");
+    sections.push("- Do NOT wrap in code blocks or quotes");
     sections.push(
-      "After the tool result is provided, continue your response.\n",
+      "- After you receive the tool result, continue your response\n",
     );
     sections.push("Available tools:");
+
     for (const tool of tools) {
-      sections.push(`- **${tool.name}**: ${tool.description}`);
+      sections.push(`\n### ${tool.name}`);
+      sections.push(tool.description);
+
+      // 파라미터 설명을 사람이 읽기 쉬운 형태로
+      const schema = tool.inputSchema as z.ZodObject<Record<string, z.ZodType>>;
+      if (schema.shape) {
+        sections.push("Parameters:");
+        for (const [key, value] of Object.entries(schema.shape)) {
+          const zodType = value as z.ZodType;
+          const isOptional = zodType.isOptional();
+          const desc = zodType.description ?? "";
+          sections.push(
+            `- ${key}${isOptional ? " (optional)" : " (required)"}: ${desc}`,
+          );
+        }
+      }
     }
   }
 
