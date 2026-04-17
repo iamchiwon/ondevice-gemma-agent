@@ -26,6 +26,35 @@ export interface QueryOptions {
 }
 
 /**
+ * AI 응답 텍스트에서 도구 호출을 추출한다.
+ * Ollama 네이티브 tool calling이 안 되는 모델을 위한 폴백.
+ */
+function parseToolCallsFromText(
+  text: string,
+): Array<{ name: string; arguments: Record<string, unknown> }> {
+  const toolCalls: Array<{ name: string; arguments: Record<string, unknown> }> =
+    [];
+  const regex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (parsed.name && parsed.arguments) {
+        toolCalls.push({
+          name: parsed.name,
+          arguments: parsed.arguments,
+        });
+      }
+    } catch {
+      // 파싱 실패 → 무시
+    }
+  }
+
+  return toolCalls;
+}
+
+/**
  * 쿼리 루프 — 비동기 제너레이터
  *
  * 사용법:
@@ -132,6 +161,18 @@ export async function* query(
     const elapsed = (Date.now() - startTime) / 1000;
 
     // ── 도구 실행 판단 ──────────────────────────────────
+
+    // 1차: Ollama 네이티브 tool_calls 확인
+    // 2차: 응답 텍스트에서 <tool_call> 태그 파싱 (폴백)
+    if (toolCalls.length === 0) {
+      toolCalls = parseToolCallsFromText(fullResponse);
+      // 텍스트에서 tool_call 부분을 제거 (사용자에게 보여줄 필요 없음)
+      if (toolCalls.length > 0) {
+        fullResponse = fullResponse
+          .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+          .trim();
+      }
+    }
     const hasToolUse = toolCalls.length > 0;
 
     if (!hasToolUse) {

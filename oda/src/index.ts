@@ -1,23 +1,12 @@
 // src/index.ts
 
-import z from "zod";
 import { CliOptions, parseCli } from "./cli.js";
 import { collectContext } from "./context.js";
 import { Conversation } from "./conversation.js";
 import { checkConnection, listModels } from "./ollama.js";
 import { query } from "./query.js";
 import { buildSystemPrompt } from "./system-prompt.js";
-import { toolRegistry } from "./tools/index.js";
-
-toolRegistry.register({
-  name: "echo",
-  description: "Echoes back the input message",
-  inputSchema: z.object({ message: z.string() }),
-  isReadOnly: true,
-  call: async (input) => ({
-    content: `Echo: ${(input as { message: string }).message}`,
-  }),
-});
+import { registerTools } from "./tools/index.js";
 
 async function main() {
   const options = parseCli();
@@ -38,6 +27,9 @@ async function main() {
     console.error(`   설치된 모델: ${models.join(", ") || "(없음)"}`);
     process.exit(2);
   }
+
+  // 도구 등록
+  registerTools();
 
   // ── 모드 분기 ─────────────────────────────────────────
   // Claude Code 참고:
