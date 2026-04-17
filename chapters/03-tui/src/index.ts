@@ -11,23 +11,6 @@ import {
 async function main() {
   const options = parseCli();
 
-  // 프롬프트가 없으면 → 나중에 대화형 모드로 (Chapter 03)
-  // 지금은 도움말을 보여주고 종료
-  if (!options.prompt) {
-    console.log('프롬프트를 입력해주세요. 예: oda "안녕하세요"');
-    console.log("도움말: oda --help");
-    process.exit(0);
-  }
-
-  // ── stdin 파이프 처리 ──────────────────────────────────
-  // cat file.txt | oda "이거 분석해줘" 형태를 지원한다.
-  // stdin에 데이터가 있으면 프롬프트 앞에 붙인다.
-  let prompt = options.prompt;
-  const stdinData = await readStdin();
-  if (stdinData) {
-    prompt = `${stdinData}\n\n---\n\n${prompt}`;
-  }
-
   // ── Ollama 연결 확인 ──────────────────────────────────
   const connected = await checkConnection();
   if (!connected) {
@@ -45,62 +28,74 @@ async function main() {
     process.exit(2);
   }
 
-  // ── 메시지 조립 ───────────────────────────────────────
-  const messages: OllamaMessage[] = [];
+  // ── 모드 분기 ─────────────────────────────────────────
+  // Claude Code 참고:
+  // main.tsx에서 --print 플래그가 있으면 헤드리스, 없으면 REPL로 분기한다.
+  // 우리도 같은 패턴: 프롬프트가 있으면 CLI, 없으면 TUI.
 
+  if (options.prompt) {
+    // CLI 모드 (Chapter 02)
+    await runCli(options);
+  } else {
+    // TUI 모드 (이번 챕터)
+    await runTui(options.model, options.system);
+  }
+}
+
+// ── CLI 모드 ──────────────────────────────────────────────
+// Chapter 02에서 만든 로직을 그대로 가져온다.
+
+async function runCli(options: {
+  model: string;
+  system?: string;
+  stream: boolean;
+  prompt: string;
+}) {
+  let prompt = options.prompt;
+  const stdinData = await readStdin();
+  if (stdinData) {
+    prompt = `${stdinData}\n\n---\n\n${prompt}`;
+  }
+
+  const messages: OllamaMessage[] = [];
   if (options.system) {
     messages.push({ role: "system", content: options.system });
   }
-
   messages.push({ role: "user", content: prompt });
 
-  // ── 실행 ──────────────────────────────────────────────
   if (options.stream) {
-    await runStreaming(options.model, messages);
+    await chat({ model: options.model, messages }, (chunk) => {
+      if (!chunk.done) process.stdout.write(chunk.message.content);
+    });
+    process.stdout.write("\n");
   } else {
-    await runBuffered(options.model, messages);
+    let result = "";
+    await chat({ model: options.model, messages }, (chunk) => {
+      if (!chunk.done) result += chunk.message.content;
+    });
+    console.log(result);
   }
 }
 
-/**
- * 스트리밍 모드: 토큰이 도착할 때마다 즉시 출력
- */
-async function runStreaming(model: string, messages: OllamaMessage[]) {
-  await chat({ model, messages }, (chunk) => {
-    if (!chunk.done) {
-      process.stdout.write(chunk.message.content);
-    }
-  });
-  // 마지막에 줄바꿈 하나 추가 (프롬프트 깨짐 방지)
-  process.stdout.write("\n");
+// ── TUI 모드 ──────────────────────────────────────────────
+
+async function runTui(model: string, system?: string) {
+  // ink와 App을 동적 import한다.
+  // 이유: CLI 모드에서는 React/Ink가 필요 없다.
+  // 불필요한 모듈 로딩을 피하는 것은 Claude Code의 "조건부 모듈 로딩" 패턴과 같다.
+  const { render } = await import("ink");
+  const { createElement } = await import("react");
+  const { App } = await import("./ui/App.js");
+
+  render(createElement(App, { model, system }));
 }
 
-/**
- * 비스트리밍 모드: 응답을 모아서 한 번에 출력
- * 다른 스크립트에서 oda의 출력을 파싱할 때 유용하다.
- */
-async function runBuffered(model: string, messages: OllamaMessage[]) {
-  let result = "";
-  await chat({ model, messages }, (chunk) => {
-    if (!chunk.done) {
-      result += chunk.message.content;
-    }
-  });
-  console.log(result);
-}
-
-/**
- * stdin에서 파이프된 데이터를 읽는다.
- * 터미널 직접 입력(TTY)이면 빈 문자열을 반환한다.
- */
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
-    // TTY면 파이프가 아님 → 빈 문자열
     if (process.stdin.isTTY) {
       resolve("");
       return;
     }
-
     let data = "";
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk) => (data += chunk));
