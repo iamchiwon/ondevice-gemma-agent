@@ -38,7 +38,7 @@ export interface QueryOptions {
  * 2. <tool_call> JSON 포맷
  * 3. <tool_call> 느슨한 포맷 (Gemma 변형들)
  */
-export function parseToolCallsFromText(
+function parseToolCallsFromText(
   text: string,
 ): Array<{ name: string; arguments: Record<string, unknown> }> {
   let results: Array<{ name: string; arguments: Record<string, unknown> }> = [];

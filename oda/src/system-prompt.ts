@@ -55,6 +55,10 @@ export function buildSystemPrompt(
     sections.push(
       "- After you receive the tool result, continue your response\n",
     );
+    sections.push(
+      "- For Bash commands, prefer safe read-only commands (ls, cat, grep, git status)",
+    );
+    sections.push("- Avoid destructive commands (rm -rf, chmod 777, etc.)");
     sections.push("Available tools:");
 
     for (const tool of tools) {
