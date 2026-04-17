@@ -1,10 +1,10 @@
 // src/ui/MessageList.tsx
 
 import { Box, Text } from "ink";
-import type { Message } from "../types.js";
+import type { Message } from "../schemas.js";
 
 interface Props {
-  messages: Message[];
+  messages: readonly Message[];
   streamingText: string; // AI가 현재 생성 중인 텍스트
   isLoading: boolean;
 }

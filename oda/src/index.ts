@@ -1,6 +1,6 @@
 // src/index.ts
 
-import { parseCli } from "./cli.js";
+import { CliOptions, parseCli } from "./cli.js";
 import {
   chat,
   checkConnection,
@@ -35,7 +35,7 @@ async function main() {
 
   if (options.prompt) {
     // CLI 모드 (Chapter 02)
-    await runCli(options);
+    await runCli({ ...options, prompt: options.prompt });
   } else {
     // TUI 모드 (이번 챕터)
     await runTui(options.model, options.system);
@@ -45,12 +45,7 @@ async function main() {
 // ── CLI 모드 ──────────────────────────────────────────────
 // Chapter 02에서 만든 로직을 그대로 가져온다.
 
-async function runCli(options: {
-  model: string;
-  system?: string;
-  stream: boolean;
-  prompt: string;
-}) {
+async function runCli(options: CliOptions & { prompt: string }) {
   let prompt = options.prompt;
   const stdinData = await readStdin();
   if (stdinData) {
