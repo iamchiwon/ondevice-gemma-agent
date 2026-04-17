@@ -38,6 +38,10 @@ export function App({ model, system }: Props) {
     lastResponseTime: 0,
     turnCount: 0,
   });
+  const [toolStatus, setToolStatus] = useState<{
+    name: string;
+    status: "running" | "done" | "error";
+  } | null>(null);
 
   // Ctrl+C로 종료
   useInput((input, key) => {
@@ -78,6 +82,19 @@ export function App({ model, system }: Props) {
               setStats(conversation.getStats());
               break;
 
+            case "tool_call":
+              setToolStatus({ name: event.name, status: "running" });
+              break;
+
+            case "tool_result":
+              setToolStatus({
+                name: event.name,
+                status: event.isError ? "error" : "done",
+              });
+              // 잠깐 보여준 뒤 클리어
+              setTimeout(() => setToolStatus(null), 1500);
+              break;
+
             case "error":
               conversation.addAssistant(`❌ 에러: ${event.message}`);
               setMessages(conversation.getMessages());
@@ -111,6 +128,7 @@ export function App({ model, system }: Props) {
         messages={messages}
         streamingText={streamingText}
         isLoading={isLoading}
+        toolStatus={toolStatus}
       />
 
       {/* 구분선 */}

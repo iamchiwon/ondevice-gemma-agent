@@ -46,12 +46,22 @@ export const ToolResultMessageSchema = z.object({
 });
 
 // ── 현재 사용하는 메시지 유니언 ──────────────────────────
-// Chapter 07 이후: ToolResultMessageSchema도 추가
+
+export const AssistantToolCallMessageSchema = z.object({
+  role: z.literal("assistant"),
+  content: z.string(),
+  toolCalls: z.array(ToolCallSchema),
+});
+
+export type AssistantToolCallMessage = z.infer<
+  typeof AssistantToolCallMessageSchema
+>;
 
 export const MessageSchema = z.discriminatedUnion("role", [
   SystemMessageSchema,
   UserMessageSchema,
   AssistantMessageSchema,
+  ToolResultMessageSchema,
 ]);
 
 // ── 타입 추론 ───────────────────────────────────────────

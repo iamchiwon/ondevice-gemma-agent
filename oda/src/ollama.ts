@@ -2,14 +2,21 @@ const OLLAMA_BASE_URL = "http://localhost:11434";
 
 // Ollama /api/chat 의 메시지 형식
 export interface OllamaMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
 }
 
 // Ollama /api/chat 스트리밍 응답의 각 청크
 export interface OllamaChatChunk {
   model: string;
-  message: OllamaMessage;
+  message: OllamaMessage & {
+    tool_calls?: Array<{
+      function: {
+        name: string;
+        arguments: Record<string, unknown>;
+      };
+    }>;
+  };
   done: boolean;
   total_duration?: number;
   eval_count?: number;
@@ -20,6 +27,7 @@ export interface ChatOptions {
   model: string;
   messages: OllamaMessage[];
   stream?: boolean;
+  tools?: unknown[]; // Ollama tool definitions
 }
 
 /**
@@ -41,6 +49,9 @@ export async function chat(
       model: options.model,
       messages: options.messages,
       stream: options.stream ?? true,
+      ...(options.tools && options.tools.length > 0
+        ? { tools: options.tools }
+        : {}),
     }),
   });
 

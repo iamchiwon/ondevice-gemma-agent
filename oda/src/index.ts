@@ -1,11 +1,23 @@
 // src/index.ts
 
+import z from "zod";
 import { CliOptions, parseCli } from "./cli.js";
 import { collectContext } from "./context.js";
 import { Conversation } from "./conversation.js";
 import { checkConnection, listModels } from "./ollama.js";
 import { query } from "./query.js";
 import { buildSystemPrompt } from "./system-prompt.js";
+import { toolRegistry } from "./tools/index.js";
+
+toolRegistry.register({
+  name: "echo",
+  description: "Echoes back the input message",
+  inputSchema: z.object({ message: z.string() }),
+  isReadOnly: true,
+  call: async (input) => ({
+    content: `Echo: ${(input as { message: string }).message}`,
+  }),
+});
 
 async function main() {
   const options = parseCli();
