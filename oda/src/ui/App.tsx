@@ -2,9 +2,11 @@
 
 import { Box, Text, useApp, useInput } from "ink";
 import { useCallback, useState } from "react";
+import { collectContext } from "../context.js";
 import { Conversation } from "../conversation.js";
 import { query } from "../query.js";
 import type { Message, SessionStats } from "../schemas.js";
+import { buildSystemPrompt } from "../system-prompt.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { StatusBar } from "./StatusBar.js";
@@ -22,7 +24,11 @@ export function App({ model, system }: Props) {
   // 우리는 아직 간단하므로 useState로 시작한다.
   // 상태가 복잡해지면 나중에 마이그레이션한다.
 
-  const [conversation] = useState(() => new Conversation(system));
+  const [conversation] = useState(() => {
+    const context = collectContext();
+    const systemPrompt = buildSystemPrompt(context, system);
+    return new Conversation(systemPrompt);
+  });
   const [messages, setMessages] = useState<readonly Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);

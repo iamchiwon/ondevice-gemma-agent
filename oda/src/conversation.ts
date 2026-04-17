@@ -18,14 +18,14 @@ import type {
 
 export class Conversation {
   private messages: Message[] = [];
-  private systemPrompt?: string;
+  private systemPrompt: string;
   private stats: SessionStats = {
     totalTokens: 0,
     lastResponseTime: 0,
     turnCount: 0,
   };
 
-  constructor(systemPrompt?: string) {
+  constructor(systemPrompt: string) {
     this.systemPrompt = systemPrompt;
   }
 
@@ -54,9 +54,7 @@ export class Conversation {
   toOllamaMessages(): OllamaMessage[] {
     const result: OllamaMessage[] = [];
 
-    if (this.systemPrompt) {
-      result.push({ role: "system", content: this.systemPrompt });
-    }
+    result.push({ role: "system", content: this.systemPrompt });
 
     for (const msg of this.messages) {
       result.push({ role: msg.role, content: msg.content });
