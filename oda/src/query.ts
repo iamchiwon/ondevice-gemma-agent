@@ -32,12 +32,90 @@ export interface QueryOptions {
 
 /**
  * AI 응답 텍스트에서 도구 호출을 추출한다.
- * Ollama 네이티브 tool calling이 안 되는 모델을 위한 폴백.
+ *
+ * 여러 포맷을 시도한다 (우선순위 순):
+ * 1. USE_TOOL/END_TOOL 포맷 (우리가 지정한 메인 포맷)
+ * 2. <tool_call> JSON 포맷
+ * 3. <tool_call> 느슨한 포맷 (Gemma 변형들)
  */
-function parseToolCallsFromText(
+export function parseToolCallsFromText(
   text: string,
 ): Array<{ name: string; arguments: Record<string, unknown> }> {
-  const toolCalls: Array<{ name: string; arguments: Record<string, unknown> }> =
+  let results: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+
+  // ── 1차: USE_TOOL/END_TOOL 포맷 ─────────────────────
+  results = parseUseToolFormat(text);
+  if (results.length > 0) return results;
+
+  // ── 2차: <tool_call> JSON 포맷 ──────────────────────
+  results = parseToolCallJsonFormat(text);
+  if (results.length > 0) return results;
+
+  // ── 3차: <tool_call> 느슨한 포맷 ────────────────────
+  results = parseToolCallLooseFormat(text);
+  if (results.length > 0) return results;
+
+  return [];
+}
+
+/**
+ * 1차: USE_TOOL/END_TOOL 포맷
+ *
+ * USE_TOOL: FileRead
+ * path: package.json
+ * startLine: 1
+ * END_TOOL
+ */
+function parseUseToolFormat(
+  text: string,
+): Array<{ name: string; arguments: Record<string, unknown> }> {
+  const results: Array<{ name: string; arguments: Record<string, unknown> }> =
+    [];
+  const regex = /USE_TOOL:\s*(\w+)\s*\n([\s\S]*?)END_TOOL/g;
+
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const name = match[1].trim();
+    const body = match[2].trim();
+    const args: Record<string, unknown> = {};
+
+    // key: value 쌍 파싱
+    for (const line of body.split("\n")) {
+      const colonIdx = line.indexOf(":");
+      if (colonIdx === -1) continue;
+
+      const key = line.substring(0, colonIdx).trim();
+      const value = line.substring(colonIdx + 1).trim();
+      if (!key) continue;
+
+      // 숫자면 number로 변환
+      const num = Number(value);
+      if (!isNaN(num) && value !== "") {
+        args[key] = num;
+      } else {
+        args[key] = value;
+      }
+    }
+
+    if (name) {
+      results.push({ name, arguments: args });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * 2차: <tool_call> JSON 포맷
+ *
+ * <tool_call>
+ * {"name": "FileRead", "arguments": {"path": "package.json"}}
+ * </tool_call>
+ */
+function parseToolCallJsonFormat(
+  text: string,
+): Array<{ name: string; arguments: Record<string, unknown> }> {
+  const results: Array<{ name: string; arguments: Record<string, unknown> }> =
     [];
   const regex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
 
@@ -45,18 +123,103 @@ function parseToolCallsFromText(
   while ((match = regex.exec(text)) !== null) {
     try {
       const parsed = JSON.parse(match[1]);
-      if (parsed.name && parsed.arguments) {
-        toolCalls.push({
-          name: parsed.name,
-          arguments: parsed.arguments,
-        });
+      if (parsed.name && typeof parsed.arguments === "object") {
+        results.push({ name: parsed.name, arguments: parsed.arguments });
       }
     } catch {
-      // 파싱 실패 → 무시
+      // JSON 파싱 실패 → 3차에서 시도
     }
   }
 
-  return toolCalls;
+  return results;
+}
+
+/**
+ * 3차: <tool_call> 느슨한 포맷 (Gemma가 뱉는 다양한 변형 처리)
+ *
+ * 지원하는 변형:
+ * - FileRead{path:"package.json"}
+ * - FileRead(path="package.json")
+ * - FileRead {"path": "package.json"}
+ * - FileRead path=package.json
+ * - FileRead path: package.json
+ */
+function parseToolCallLooseFormat(
+  text: string,
+): Array<{ name: string; arguments: Record<string, unknown> }> {
+  const results: Array<{ name: string; arguments: Record<string, unknown> }> =
+    [];
+  const regex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const content = match[1].trim();
+    const parsed = parseLooseToolCall(content);
+    if (parsed) {
+      results.push(parsed);
+    }
+  }
+
+  return results;
+}
+
+function parseLooseToolCall(
+  content: string,
+): { name: string; arguments: Record<string, unknown> } | null {
+  // 도구 이름 추출: 첫 번째 단어 (알파벳으로만 구성)
+  const nameMatch = content.match(/^(\w+)/);
+  if (!nameMatch) return null;
+
+  const name = nameMatch[1];
+  const rest = content.substring(name.length).trim();
+  const args: Record<string, unknown> = {};
+
+  if (!rest) return { name, arguments: args };
+
+  // 중괄호/괄호 안의 내용 추출
+  const bracketMatch = rest.match(/[{(]([\s\S]*)[})]/);
+  const body = bracketMatch ? bracketMatch[1] : rest;
+
+  // key-value 쌍 추출 (다양한 구분자 지원)
+  // key:"value"  key='value'  key=value  key: value
+  const kvRegex =
+    /(\w+)\s*[:=]\s*(?:<\|"\|>([^<]*)<\|"\|>|"([^"]*)"|'([^']*)'|(\S+))/g;
+
+  let kvMatch;
+  while ((kvMatch = kvRegex.exec(body)) !== null) {
+    const key = kvMatch[1];
+    // 여러 캡처 그룹 중 매칭된 것 사용
+    const value = kvMatch[2] ?? kvMatch[3] ?? kvMatch[4] ?? kvMatch[5] ?? "";
+
+    const num = Number(value);
+    if (!isNaN(num) && value !== "") {
+      args[key] = num;
+    } else {
+      args[key] = value;
+    }
+  }
+
+  // key-value를 못 찾았으면 전체를 첫 번째 파라미터의 값으로 시도
+  if (Object.keys(args).length === 0 && rest) {
+    // "package.json" 같은 단일 값 → path로 추정
+    const cleaned = rest.replace(/[{()}'"<|>]/g, "").trim();
+    if (cleaned) {
+      args["path"] = cleaned;
+    }
+  }
+
+  return Object.keys(args).length > 0 ? { name, arguments: args } : null;
+}
+
+/**
+ * 응답 텍스트에서 도구 호출 부분을 제거한다.
+ * 사용자에게 보여줄 텍스트에서 도구 호출 마크업을 빼기 위해.
+ */
+function stripToolCallsFromText(text: string): string {
+  return text
+    .replace(/USE_TOOL:\s*\w+\s*\n[\s\S]*?END_TOOL/g, "")
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+    .trim();
 }
 
 /**
@@ -173,9 +336,7 @@ export async function* query(
       toolCalls = parseToolCallsFromText(fullResponse);
       // 텍스트에서 tool_call 부분을 제거 (사용자에게 보여줄 필요 없음)
       if (toolCalls.length > 0) {
-        fullResponse = fullResponse
-          .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
-          .trim();
+        fullResponse = stripToolCallsFromText(fullResponse);
       }
     }
     const hasToolUse = toolCalls.length > 0;
