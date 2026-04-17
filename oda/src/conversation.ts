@@ -13,6 +13,7 @@ import type {
   AssistantMessage,
   Message,
   SessionStats,
+  ToolCall,
   UserMessage,
 } from "./schemas.js";
 
@@ -50,6 +51,29 @@ export class Conversation {
     this.stats.lastResponseTime = responseTime;
   }
 
+  /** 도구 호출을 포함한 어시스턴트 응답을 추가한다 */
+  addAssistantWithToolCalls(content: string, toolCalls: ToolCall[]): void {
+    // 텍스트 응답이 있으면 추가
+    if (content) {
+      this.messages.push({ role: "assistant", content });
+    }
+    // 도구 호출 정보는 Ollama 메시지 변환 시 처리
+    this._pendingToolCalls = toolCalls;
+    this.stats.turnCount++;
+  }
+
+  /** 도구 실행 결과를 추가한다 */
+  addToolResult(toolCallId: string, content: string, isError = false): void {
+    this._toolResults.push({ toolCallId, content, isError });
+  }
+
+  private _pendingToolCalls: ToolCall[] = [];
+  private _toolResults: Array<{
+    toolCallId: string;
+    content: string;
+    isError: boolean;
+  }> = [];
+
   /** Ollama API에 보낼 메시지 배열을 반환한다 */
   toOllamaMessages(): OllamaMessage[] {
     const result: OllamaMessage[] = [];
@@ -58,6 +82,26 @@ export class Conversation {
 
     for (const msg of this.messages) {
       result.push({ role: msg.role, content: msg.content });
+    }
+
+    // 펜딩 중인 도구 호출이 있으면 assistant 메시지에 tool_calls 포함
+    if (this._pendingToolCalls.length > 0) {
+      result.push({
+        role: "assistant",
+        content: "",
+        tool_calls: this._pendingToolCalls.map((tc) => ({
+          function: { name: tc.name, arguments: tc.arguments },
+        })),
+      } as OllamaMessage);
+
+      // 도구 결과를 tool role 메시지로 추가
+      for (const tr of this._toolResults) {
+        result.push({ role: "tool", content: tr.content } as OllamaMessage);
+      }
+
+      // 클리어
+      this._pendingToolCalls = [];
+      this._toolResults = [];
     }
 
     return result;

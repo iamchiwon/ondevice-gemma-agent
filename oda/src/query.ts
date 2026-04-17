@@ -14,14 +14,15 @@
 import type { Conversation } from "./conversation.js";
 import type { QueryEvent } from "./events.js";
 import { chat } from "./ollama.js";
+import { ToolCall } from "./schemas.js";
+import { Tool, toolRegistry } from "./tools/index.js";
 
 /** query() 함수의 옵션 */
 export interface QueryOptions {
   model: string;
   conversation: Conversation;
   maxTurns?: number; // 무한 루프 방지 (기본: 10)
-  // Chapter 07에서 추가:
-  // tools?: Tool[];
+  tools?: Tool[];
 }
 
 /**
@@ -48,35 +49,52 @@ export async function* query(
   options: QueryOptions,
 ): AsyncGenerator<QueryEvent> {
   const { model, conversation, maxTurns = 10 } = options;
+  const tools = options.tools ?? toolRegistry.getAll();
+
+  // Ollama에 전달할 도구 정의
+  const ollamaTools =
+    tools.length > 0 ? toolRegistry.toOllamaTools() : undefined;
 
   for (let turn = 0; turn < maxTurns; turn++) {
     // ── API 호출 ────────────────────────────────────────
     const messages = conversation.toOllamaMessages();
     let fullResponse = "";
     let tokenCount = 0;
+    let toolCalls: Array<{ name: string; arguments: Record<string, unknown> }> =
+      [];
     const startTime = Date.now();
 
     try {
-      // Ollama 스트리밍 호출
-      // chat()은 콜백 기반이므로, Promise로 감싸서 제너레이터와 연결한다.
-      // 이벤트를 버퍼에 모아뒀다가 하나씩 yield하는 패턴을 쓴다.
       const events: QueryEvent[] = [];
       let resolveWait: (() => void) | null = null;
 
-      const chatPromise = chat({ model, messages }, (chunk) => {
-        if (!chunk.done) {
-          const content = chunk.message.content;
-          fullResponse += content;
-          events.push({ type: "text_delta", content });
-          // 대기 중인 yield를 깨운다
+      const chatPromise = chat(
+        { model, messages, tools: ollamaTools },
+        (chunk) => {
+          if (!chunk.done) {
+            // 텍스트 응답
+            if (chunk.message.content) {
+              fullResponse += chunk.message.content;
+              events.push({
+                type: "text_delta",
+                content: chunk.message.content,
+              });
+            }
+            // 도구 호출 감지
+            if (chunk.message.tool_calls) {
+              toolCalls = chunk.message.tool_calls.map((tc) => ({
+                name: tc.function.name,
+                arguments: tc.function.arguments,
+              }));
+            }
+          } else {
+            tokenCount = chunk.eval_count ?? 0;
+          }
           resolveWait?.();
-        } else {
-          tokenCount = chunk.eval_count ?? 0;
-        }
-      });
+        },
+      );
 
-      // 이벤트가 도착할 때마다 yield
-      // chat()이 완료될 때까지 반복
+      // 이벤트 소비 루프 (Chapter 05와 동일)
       let chatDone = false;
       chatPromise
         .then(() => {
@@ -98,7 +116,6 @@ export async function* query(
           yield event;
           if (event.type === "error") return;
         } else {
-          // 이벤트가 없으면 다음 이벤트가 올 때까지 대기
           await new Promise<void>((resolve) => {
             resolveWait = resolve;
           });
@@ -112,30 +129,90 @@ export async function* query(
       return;
     }
 
-    // ── 응답 완료 처리 ──────────────────────────────────
     const elapsed = (Date.now() - startTime) / 1000;
 
-    // 어시스턴트 응답을 대화 기록에 추가
-    conversation.addAssistant(fullResponse);
-    conversation.updateStats(tokenCount, elapsed);
+    // ── 도구 실행 판단 ──────────────────────────────────
+    const hasToolUse = toolCalls.length > 0;
 
-    yield { type: "response_complete", content: fullResponse };
-    yield { type: "turn_complete", tokens: tokenCount, elapsed };
-
-    // ── 다음 턴 결정 ────────────────────────────────────
-    // 지금은 항상 1턴만 실행하고 종료한다.
-    // Chapter 07에서 도구 실행이 추가되면:
-    //   - 응답에 tool_use가 있으면 → 도구 실행 → 다음 턴
-    //   - tool_use가 없으면 → 루프 종료
-    //
-    // Claude Code의 query.ts:
-    //   "tool_use in response?
-    //    YES --> build new State, go back to step 1
-    //    NO  --> exit loop, return to user"
-
-    const hasToolUse = false; // Chapter 07에서 실제 판단 로직으로 교체
     if (!hasToolUse) {
+      // 도구 사용 없음 → 최종 응답
+      conversation.addAssistant(fullResponse);
+      conversation.updateStats(tokenCount, elapsed);
+      yield { type: "response_complete", content: fullResponse };
+      yield { type: "turn_complete", tokens: tokenCount, elapsed };
       break;
     }
+
+    // ── 도구 실행 ───────────────────────────────────────
+    // Claude Code 참고 (8.1절):
+    // 10단계 파이프라인: lookup → validate → hooks → permissions → execute → ...
+    // 우리는 단순화: lookup → validate → execute
+
+    const toolCallSchemas: ToolCall[] = toolCalls.map((tc, i) => ({
+      id: `call_${turn}_${i}`,
+      name: tc.name,
+      arguments: tc.arguments,
+    }));
+
+    conversation.addAssistantWithToolCalls(fullResponse, toolCallSchemas);
+
+    for (const tc of toolCallSchemas) {
+      // 1. 도구 찾기
+      const tool = tools.find((t) => t.name === tc.name);
+
+      yield {
+        type: "tool_call",
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments,
+      };
+
+      let result: { content: string; isError: boolean };
+
+      if (!tool) {
+        result = { content: `Unknown tool: ${tc.name}`, isError: true };
+      } else {
+        try {
+          // 2. 입력 검증
+          const parsed = tool.inputSchema.safeParse(tc.arguments);
+          if (!parsed.success) {
+            result = {
+              content: `Invalid input: ${parsed.error.message}`,
+              isError: true,
+            };
+          } else {
+            // 3. 실행
+            const toolResult = await tool.call(
+              parsed.data as Record<string, unknown>,
+            );
+            result = {
+              content: toolResult.content,
+              isError: toolResult.isError ?? false,
+            };
+          }
+        } catch (error) {
+          result = {
+            content: `Tool error: ${error instanceof Error ? error.message : String(error)}`,
+            isError: true,
+          };
+        }
+      }
+
+      // 결과를 대화에 추가
+      conversation.addToolResult(tc.id, result.content, result.isError);
+
+      yield {
+        type: "tool_result",
+        toolCallId: tc.id,
+        name: tc.name,
+        content: result.content,
+        isError: result.isError,
+      };
+    }
+
+    yield { type: "turn_complete", tokens: tokenCount, elapsed };
+
+    // 다음 턴으로 → for 루프 처음으로 돌아감
+    // 도구 결과가 대화에 추가된 상태로 다시 API 호출
   }
 }

@@ -33,22 +33,22 @@ export interface TurnCompleteEvent {
   elapsed: number; // 초 단위
 }
 
-// Chapter 07에서 추가될 이벤트:
-// /** AI가 도구 사용을 요청했다 */
-// export interface ToolCallEvent {
-//   type: "tool_call";
-//   id: string;
-//   name: string;
-//   arguments: Record<string, unknown>;
-// }
-//
-// /** 도구 실행 결과가 나왔다 */
-// export interface ToolResultEvent {
-//   type: "tool_result";
-//   toolCallId: string;
-//   content: string;
-//   isError: boolean;
-// }
+/** AI가 도구 사용을 요청했다 */
+export interface ToolCallEvent {
+  type: "tool_call";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/** 도구 실행 결과가 나왔다 */
+export interface ToolResultEvent {
+  type: "tool_result";
+  toolCallId: string;
+  name: string;
+  content: string;
+  isError: boolean;
+}
 
 /** 에러가 발생했다 */
 export interface ErrorEvent {
@@ -61,7 +61,6 @@ export type QueryEvent =
   | TextDeltaEvent
   | ResponseCompleteEvent
   | TurnCompleteEvent
+  | ToolCallEvent
+  | ToolResultEvent
   | ErrorEvent;
-// Chapter 07에서 추가:
-// | ToolCallEvent
-// | ToolResultEvent
