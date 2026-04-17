@@ -444,3 +444,76 @@ AI 응답:                         AI 응답:
 ## 다음 챕터
 
 → [Chapter 09. 도구 실행 파이프라인](../09-tool-pipeline/) — 지금은 도구 실행이 query.ts에 인라인으로 들어있다. 이것을 별도의 파이프라인으로 추출하고, 입력 검증 → 실행 → 결과 변환 → 크기 제한을 체계화한다. Claude Code의 10단계 파이프라인의 단순화 버전이다.
+
+---
+
+## 보충: Gemma Tool Calling 호환성 튜닝
+
+📄 **전체 보충 자료**: [chapter-08-supplement-tool-calling-fix.md](./chapter-08-supplement-tool-calling-fix.md)
+
+### 문제 상황
+
+Gemma E2B가 도구 호출 시 우리가 지정한 JSON 포맷을 따르지 않는다:
+
+```
+# 기대한 형식
+<tool_call>
+{"name": "FileRead", "arguments": {"path": "package.json"}}
+</tool_call>
+
+# 실제 출력 (변형 1)
+<tool_call>
+FileRead{path:"package.json"}
+</tool_call>
+
+# 다른 가능한 변형들
+<tool_call>FileRead(path="package.json")</tool_call>
+<tool_call>FileRead {"path": "package.json"}</tool_call>
+```
+
+작은 모델은 복잡한 JSON을 정확히 생성하기 어렵다. **프롬프트를 단순화**하고 **파서를 유연하게** 만들어야 한다.
+
+### 핵심 수정 내용
+
+#### 1. 시스템 프롬프트 단순화 (`system-prompt.ts`)
+
+도구 사용 안내를 JSON 대신 **USE_TOOL/END_TOOL 포맷**으로 변경:
+
+```
+USE_TOOL: FileRead
+path: package.json
+END_TOOL
+```
+
+#### 2. 유연한 파서 구현 (`query.ts`)
+
+3단계 폴백 전략:
+
+- **1차**: USE_TOOL/END_TOOL 포맷 파싱
+- **2차**: `<tool_call>` JSON 포맷 파싱
+- **3차**: Gemma 변형들 (중괄호, 괄호, 공백 분리 등) 파싱
+
+#### 3. 파서 테스트 (`src/tools/__test__/parser-test.ts`)
+
+다양한 도구 호출 형식에 대한 테스트 케이스 작성.
+
+### 적용 방법
+
+[완전한 구현 가이드를 본 자료에서 확인하세요](./chapter-08-supplement-tool-calling-fix.md)
+
+**핵심 원칙**: 모델을 바꿀 수 없으니 우리가 맞춘다.
+
+- 프롬프트: 모델이 따르기 쉬운 형태
+- 파서: 모델이 뱉는 모든 변형 수용
+
+### 동작 확인
+
+```bash
+# TUI 모드 테스트
+pnpm dev
+
+# 프롬프트: "package.json 파일 읽어서 설명해줘"
+# 기대: 🔧 실행 중: FileRead → 파일 내용 기반 설명
+```
+
+**성공 신호**: 🔧 아이콘이 뜨면서 "실행 중: FileRead" → "완료: FileRead"가 표시되고, AI가 파일 내용을 기반으로 답변하는 것
