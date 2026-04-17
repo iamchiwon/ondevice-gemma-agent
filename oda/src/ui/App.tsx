@@ -2,8 +2,9 @@
 
 import { Box, Text, useApp, useInput } from "ink";
 import { useCallback, useState } from "react";
-import { chat, type OllamaMessage } from "../ollama.js";
-import type { Message, SessionStats } from "../types.js";
+import { Conversation } from "../conversation.js";
+import { chat } from "../ollama.js";
+import type { Message, SessionStats } from "../schemas.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
 import { StatusBar } from "./StatusBar.js";
@@ -21,13 +22,15 @@ export function App({ model, system }: Props) {
   // 우리는 아직 간단하므로 useState로 시작한다.
   // 상태가 복잡해지면 나중에 마이그레이션한다.
 
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversation] = useState(() => new Conversation(system));
+  const [messages, setMessages] = useState<readonly Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [stats, setStats] = useState<SessionStats>({
     totalTokens: 0,
     lastResponseTime: 0,
+    turnCount: 0,
   });
 
   // Ctrl+C로 종료
@@ -44,24 +47,14 @@ export function App({ model, system }: Props) {
       if (!trimmed || isLoading) return;
 
       // 1. 사용자 메시지 추가
-      const userMessage: Message = { role: "user", content: trimmed };
-      setMessages((prev) => [...prev, userMessage]);
+      conversation.addUser(trimmed);
+      setMessages(conversation.getMessages());
       setInputValue("");
       setIsLoading(true);
       setStreamingText("");
 
-      // 2. Ollama API 호출을 위한 메시지 배열 조립
-      //    이전 대화 내용을 모두 포함해야 맥락을 유지한다.
-      const apiMessages: OllamaMessage[] = [];
-
-      if (system) {
-        apiMessages.push({ role: "system", content: system });
-      }
-
-      // 기존 대화 + 새 메시지
-      for (const msg of [...messages, userMessage]) {
-        apiMessages.push({ role: msg.role, content: msg.content });
-      }
+      // 2. Ollama API 호출
+      const apiMessages = conversation.toOllamaMessages();
 
       // 3. 스트리밍 호출
       let fullResponse = "";
@@ -78,18 +71,14 @@ export function App({ model, system }: Props) {
           }
         });
 
-        // 4. 완성된 응답을 메시지 목록에 추가
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: fullResponse },
-        ]);
+        // 4. 완성된 응답 추가
+        conversation.addAssistant(fullResponse);
+        setMessages(conversation.getMessages());
 
         // 5. 통계 갱신
         const elapsed = (Date.now() - startTime) / 1000;
-        setStats((prev) => ({
-          totalTokens: prev.totalTokens + tokenCount,
-          lastResponseTime: elapsed,
-        }));
+        conversation.updateStats(tokenCount, elapsed);
+        setStats(conversation.getStats());
       } catch (error) {
         // 에러를 어시스턴트 메시지로 표시
         const errorMessage =

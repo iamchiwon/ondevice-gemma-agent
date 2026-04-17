@@ -1,7 +1,7 @@
 // src/ui/StatusBar.tsx
 
 import { Box, Text } from "ink";
-import type { SessionStats } from "../types.js";
+import type { SessionStats } from "../schemas.js";
 
 interface Props {
   model: string;
@@ -16,6 +16,7 @@ export function StatusBar({ model, stats }: Props) {
         {stats.totalTokens > 0 && ` | ${stats.totalTokens} tokens`}
         {stats.lastResponseTime > 0 &&
           ` | ${stats.lastResponseTime.toFixed(1)}s`}
+        {stats.turnCount > 0 && ` | ${stats.turnCount} turns`}
       </Text>
       <Text dimColor>Ctrl+C 종료</Text>
     </Box>
