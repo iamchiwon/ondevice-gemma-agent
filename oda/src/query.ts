@@ -71,38 +71,60 @@ function parseUseToolFormat(
 ): Array<{ name: string; arguments: Record<string, unknown> }> {
   const results: Array<{ name: string; arguments: Record<string, unknown> }> =
     [];
-  const regex = /USE_TOOL:\s*(\w+)\s*\n([\s\S]*?)END_TOOL/g;
 
+  // 1차: END_TOOL이 있는 정상 케이스
+  const strictRegex = /USE_TOOL:\s*(\w+)\s*\n([\s\S]*?)END_TOOL/g;
   let match;
-  while ((match = regex.exec(text)) !== null) {
-    const name = match[1].trim();
-    const body = match[2].trim();
-    const args: Record<string, unknown> = {};
+  while ((match = strictRegex.exec(text)) !== null) {
+    results.push({
+      name: match[1].trim(),
+      arguments: parseKeyValueBody(match[2]),
+    });
+  }
+  if (results.length > 0) return results;
 
-    // key: value 쌍 파싱
-    for (const line of body.split("\n")) {
-      const colonIdx = line.indexOf(":");
-      if (colonIdx === -1) continue;
-
-      const key = line.substring(0, colonIdx).trim();
-      const value = line.substring(colonIdx + 1).trim();
-      if (!key) continue;
-
-      // 숫자면 number로 변환
-      const num = Number(value);
-      if (!isNaN(num) && value !== "") {
-        args[key] = num;
-      } else {
-        args[key] = value;
-      }
-    }
-
-    if (name) {
-      results.push({ name, arguments: args });
-    }
+  // 2차: END_TOOL이 없는 경우 (Gemma가 빼먹을 때)
+  // USE_TOOL: 이후 key: value 줄이 연속되다가
+  // 빈 줄이나 일반 텍스트가 나오면 거기서 끊는다
+  const looseRegex = /USE_TOOL:\s*(\w+)\s*\n((?:\s*\w+:\s*.+\n?)+)/g;
+  while ((match = looseRegex.exec(text)) !== null) {
+    results.push({
+      name: match[1].trim(),
+      arguments: parseKeyValueBody(match[2]),
+    });
   }
 
   return results;
+}
+
+/**
+ * key: value 줄들을 파싱한다.
+ * 값에서 따옴표를 벗기고, 숫자는 number로 변환한다.
+ */
+function parseKeyValueBody(body: string): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+
+  for (const line of body.split("\n")) {
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+
+    const key = line.substring(0, colonIdx).trim();
+    let value = line.substring(colonIdx + 1).trim();
+    if (!key) continue;
+
+    // 따옴표 벗기기: 'value' → value, "value" → value
+    value = value.replace(/^['"](.*)['"]$/, "$1");
+
+    // 숫자면 number로 변환
+    const num = Number(value);
+    if (!isNaN(num) && value !== "") {
+      args[key] = num;
+    } else {
+      args[key] = value;
+    }
+  }
+
+  return args;
 }
 
 /**

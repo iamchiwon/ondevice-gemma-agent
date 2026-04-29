@@ -8,15 +8,16 @@
 // 우리는 단순히 등록만 한다.
 
 import { bashTool } from "./bash.js";
+import { fileEditTool } from "./file-edit.js";
 import { fileReadTool } from "./file-read.js";
+import { globTool } from "./glob.js";
+import { grepTool } from "./grep.js";
 import { toolRegistry } from "./registry.js";
 
 export function registerTools(): void {
   toolRegistry.register(fileReadTool);
   toolRegistry.register(bashTool);
-
-  // 다음 챕터에서 추가:
-  // toolRegistry.register(fileEditTool);   // Chapter 11
-  // toolRegistry.register(grepTool);       // Chapter 11
-  // toolRegistry.register(globTool);       // Chapter 11
+  toolRegistry.register(fileEditTool);
+  toolRegistry.register(grepTool);
+  toolRegistry.register(globTool);
 }
