@@ -50,6 +50,8 @@ export function buildSystemPrompt(
     sections.push("END_TOOL\n");
     sections.push("Rules:");
     sections.push("- Write USE_TOOL and END_TOOL on their own lines");
+    sections.push("- You MUST always write END_TOOL after the parameters");
+    sections.push("- Every USE_TOOL block must be closed with END_TOOL");
     sections.push("- One parameter per line in key: value format");
     sections.push("- Do NOT wrap in code blocks or quotes");
     sections.push(
