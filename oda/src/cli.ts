@@ -7,6 +7,7 @@ export interface CliOptions {
   system?: string;
   stream: boolean;
   prompt?: string;
+  bypass: boolean;
 }
 
 /**
@@ -34,6 +35,7 @@ export function parseCli(): CliOptions {
     )
     .option("-s, --system <prompt>", "시스템 프롬프트 (AI의 역할 설정)")
     .option("--no-stream", "스트리밍 비활성화 (응답을 모아서 한 번에 출력)")
+    .option("--bypass", "권한 확인 없이 모든 도구 자동 실행 (주의!)", false)
     .parse();
 
   const options = program.opts();
@@ -44,5 +46,6 @@ export function parseCli(): CliOptions {
     system: options.system,
     stream: options.stream,
     prompt: args[0],
+    bypass: options.bypass,
   };
 }
