@@ -14,6 +14,11 @@
 import type { Conversation } from "./conversation.js";
 import type { QueryEvent } from "./events.js";
 import { chat } from "./ollama.js";
+import {
+  addSessionRule,
+  DEFAULT_PERMISSION_CONFIG,
+  type PermissionConfig,
+} from "./permissions.js";
 import { ToolCall } from "./schemas.js";
 import {
   executeToolBatch,
@@ -28,6 +33,12 @@ export interface QueryOptions {
   conversation: Conversation;
   maxTurns?: number; // 무한 루프 방지 (기본: 10)
   tools?: Tool[];
+  permissionConfig?: PermissionConfig;
+  onPermissionRequest?: (
+    toolName: string,
+    input: Record<string, unknown>,
+    reason: string,
+  ) => Promise<"allow" | "deny" | "always_allow">;
 }
 
 /**
@@ -283,10 +294,11 @@ export async function* query(
       [];
     const startTime = Date.now();
 
-    try {
-      const events: QueryEvent[] = [];
-      let resolveWait: (() => void) | null = null;
+    // 이벤트 큐와 대기 메커니즘을 턴 레벨에서 정의
+    const events: QueryEvent[] = [];
+    let resolveWait: (() => void) | null = null;
 
+    try {
       const chatPromise = chat(
         { model, messages, tools: ollamaTools },
         (chunk) => {
@@ -403,7 +415,46 @@ export async function* query(
     }
 
     // 배치 실행
-    const pipelineOptions: PipelineOptions = { tools };
+    const permissionConfig =
+      options.permissionConfig ?? DEFAULT_PERMISSION_CONFIG;
+
+    const pipelineOptions: PipelineOptions = {
+      tools,
+      permissionConfig,
+      onPermissionRequest: options.onPermissionRequest
+        ? async (tool, input, reason) => {
+            // 이벤트로 UI에 알린다
+            events.push({
+              type: "permission_request" as const,
+              toolName: tool.name,
+              input,
+              reason,
+            });
+            resolveWait?.();
+
+            // UI에서 응답을 받을 때까지 대기
+            const decision = await options.onPermissionRequest!(
+              tool.name,
+              input,
+              reason,
+            );
+
+            events.push({
+              type: "permission_result" as const,
+              toolName: tool.name,
+              allowed: decision !== "deny",
+            });
+            resolveWait?.();
+
+            // "항상 허용"이면 세션 규칙에 추가
+            if (decision === "always_allow") {
+              addSessionRule(permissionConfig, tool.name, "allow");
+            }
+
+            return decision;
+          }
+        : undefined,
+    };
     const results: Array<{
       id: string;
       name: string;
@@ -424,6 +475,12 @@ export async function* query(
         });
       },
     );
+
+    // 도구 실행 중 생성된 권한 요청 이벤트 처리
+    while (events.length > 0) {
+      const event = events.shift()!;
+      yield event;
+    }
 
     // 도구 결과 이벤트 방출
     for (const r of results) {

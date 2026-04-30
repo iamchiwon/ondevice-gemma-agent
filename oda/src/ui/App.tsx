@@ -4,19 +4,25 @@ import { Box, Text, useApp, useInput } from "ink";
 import { useCallback, useState } from "react";
 import { collectContext } from "../context.js";
 import { Conversation } from "../conversation.js";
+import {
+  DEFAULT_PERMISSION_CONFIG,
+  type PermissionConfig,
+} from "../permissions.js";
 import { query } from "../query.js";
 import type { Message, SessionStats } from "../schemas.js";
 import { buildSystemPrompt } from "../system-prompt.js";
 import { Input } from "./Input.js";
 import { MessageList } from "./MessageList.js";
+import { PermissionPrompt } from "./PermissionPrompt.js";
 import { StatusBar } from "./StatusBar.js";
 
 interface Props {
   model: string;
   system?: string;
+  permissionMode?: "default" | "bypass";
 }
 
-export function App({ model, system }: Props) {
+export function App({ model, system, permissionMode }: Props) {
   const { exit } = useApp();
 
   // ── 상태 ──────────────────────────────────────────────
@@ -42,6 +48,17 @@ export function App({ model, system }: Props) {
     name: string;
     status: "running" | "done" | "error";
   } | null>(null);
+  const [permissionRequest, setPermissionRequest] = useState<{
+    toolName: string;
+    input: Record<string, unknown>;
+    reason: string;
+    resolve: (decision: "allow" | "deny" | "always_allow") => void;
+  } | null>(null);
+
+  const [permissionConfig] = useState<PermissionConfig>(() => ({
+    ...DEFAULT_PERMISSION_CONFIG,
+    mode: permissionMode ?? "default",
+  }));
 
   // Ctrl+C로 종료
   useInput((input, key) => {
@@ -67,7 +84,16 @@ export function App({ model, system }: Props) {
       // 이전: chat()을 직접 호출하고 콜백으로 상태 관리
       // 이후: query() 제너레이터를 for-await-of로 소비
       try {
-        for await (const event of query({ model, conversation })) {
+        for await (const event of query({
+          model,
+          conversation,
+          permissionConfig,
+          onPermissionRequest: (toolName, input, reason) => {
+            return new Promise((resolve) => {
+              setPermissionRequest({ toolName, input, reason, resolve });
+            });
+          },
+        })) {
           switch (event.type) {
             case "text_delta":
               setStreamingText((prev) => prev + event.content);
@@ -95,6 +121,15 @@ export function App({ model, system }: Props) {
               setTimeout(() => setToolStatus(null), 1500);
               break;
 
+            case "permission_request":
+              // PermissionPrompt가 렌더링된다
+              // (상태는 onPermissionRequest 콜백에서 이미 설정됨)
+              break;
+
+            case "permission_result":
+              setPermissionRequest(null);
+              break;
+
             case "error":
               conversation.addAssistant(`❌ 에러: ${event.message}`);
               setMessages(conversation.getMessages());
@@ -106,7 +141,7 @@ export function App({ model, system }: Props) {
         setStreamingText("");
       }
     },
-    [messages, isLoading, model],
+    [messages, isLoading, model, conversation, permissionConfig],
   );
 
   // ── 렌더링 ────────────────────────────────────────────
@@ -135,6 +170,19 @@ export function App({ model, system }: Props) {
       <Box paddingX={1}>
         <Text dimColor>{"─".repeat(50)}</Text>
       </Box>
+
+      {/* 권한 확인 프롬프트 */}
+      {permissionRequest && (
+        <PermissionPrompt
+          toolName={permissionRequest.toolName}
+          input={permissionRequest.input}
+          reason={permissionRequest.reason}
+          onDecision={(decision) => {
+            permissionRequest.resolve(decision);
+            setPermissionRequest(null);
+          }}
+        />
+      )}
 
       {/* 입력창 */}
       <Input
