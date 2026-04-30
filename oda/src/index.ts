@@ -4,6 +4,10 @@ import { CliOptions, parseCli } from "./cli.js";
 import { collectContext } from "./context.js";
 import { Conversation } from "./conversation.js";
 import { checkConnection, listModels } from "./ollama.js";
+import {
+  DEFAULT_PERMISSION_CONFIG,
+  type PermissionConfig,
+} from "./permissions.js";
 import { query } from "./query.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { registerTools } from "./tools/index.js";
@@ -41,7 +45,7 @@ async function main() {
     await runCli({ ...options, prompt: options.prompt });
   } else {
     // TUI 모드 (이번 챕터)
-    await runTui(options.model, options.system);
+    await runTui(options.model, options.system, options.bypass);
   }
 }
 
@@ -60,7 +64,23 @@ async function runCli(options: CliOptions & { prompt: string }) {
   const conversation = new Conversation(systemPrompt);
   conversation.addUser(prompt);
 
-  for await (const event of query({ model: options.model, conversation })) {
+  const permissionConfig: PermissionConfig = {
+    ...DEFAULT_PERMISSION_CONFIG,
+    mode: options.bypass ? "bypass" : "default",
+  };
+
+  for await (const event of query({
+    model: options.model,
+    conversation,
+    permissionConfig,
+    // CLI에서는 변경 도구 자동 거부 (bypass 아닌 경우)
+    onPermissionRequest: async (toolName) => {
+      console.error(
+        `⚠️  ${toolName} 실행이 차단되었습니다. --bypass 플래그로 허용할 수 있습니다.`,
+      );
+      return "deny";
+    },
+  })) {
     switch (event.type) {
       case "text_delta":
         if (options.stream) {
@@ -87,7 +107,7 @@ async function runCli(options: CliOptions & { prompt: string }) {
 
 // ── TUI 모드 ──────────────────────────────────────────────
 
-async function runTui(model: string, system?: string) {
+async function runTui(model: string, system?: string, bypass?: boolean) {
   // ink와 App을 동적 import한다.
   // 이유: CLI 모드에서는 React/Ink가 필요 없다.
   // 불필요한 모듈 로딩을 피하는 것은 Claude Code의 "조건부 모듈 로딩" 패턴과 같다.
@@ -95,7 +115,13 @@ async function runTui(model: string, system?: string) {
   const { createElement } = await import("react");
   const { App } = await import("./ui/App.js");
 
-  render(createElement(App, { model, system }));
+  render(
+    createElement(App, {
+      model,
+      system,
+      permissionMode: bypass ? "bypass" : "default",
+    }),
+  );
 }
 
 function readStdin(): Promise<string> {

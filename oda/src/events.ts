@@ -50,6 +50,21 @@ export interface ToolResultEvent {
   isError: boolean;
 }
 
+/** 권한 확인이 필요하다 (UI가 사용자에게 물어봐야 함) */
+export interface PermissionRequestEvent {
+  type: "permission_request";
+  toolName: string;
+  input: Record<string, unknown>;
+  reason: string;
+}
+
+/** 권한 결과가 결정되었다 */
+export interface PermissionResultEvent {
+  type: "permission_result";
+  toolName: string;
+  allowed: boolean;
+}
+
 /** 에러가 발생했다 */
 export interface ErrorEvent {
   type: "error";
@@ -63,4 +78,6 @@ export type QueryEvent =
   | TurnCompleteEvent
   | ToolCallEvent
   | ToolResultEvent
+  | PermissionRequestEvent
+  | PermissionResultEvent
   | ErrorEvent;

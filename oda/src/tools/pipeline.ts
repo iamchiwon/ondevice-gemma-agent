@@ -18,6 +18,7 @@
 // [1.5] Chapter 13: PreToolUse 훅
 // [3.5] Chapter 13: PostToolUse 훅
 
+import { checkPermission, type PermissionConfig } from "../permissions.js";
 import type { Tool, ToolResult } from "./types.js";
 
 // ── 설정 ────────────────────────────────────────────────
@@ -33,7 +34,13 @@ export interface PipelineResult {
   /** 실행에 걸린 시간 (ms) */
   duration: number;
   /** 어떤 단계에서 끝났는지 */
-  stage: "lookup" | "validate" | "execute" | "truncate" | "format";
+  stage:
+    | "lookup"
+    | "validate"
+    | "permission"
+    | "execute"
+    | "truncate"
+    | "format";
 }
 
 // ── 파이프라인 옵션 ─────────────────────────────────────
@@ -44,9 +51,12 @@ export interface PipelineOptions {
   /** 결과 최대 문자 수 (기본: 100,000) */
   maxResultChars?: number;
 
-  // Chapter 12에서 추가:
-  // permissionMode?: "default" | "auto" | "bypass";
-  // onPermissionRequest?: (tool: string, input: unknown) => Promise<boolean>;
+  permissionConfig?: PermissionConfig;
+  onPermissionRequest?: (
+    tool: Tool,
+    input: Record<string, unknown>,
+    reason: string,
+  ) => Promise<"allow" | "deny" | "always_allow">;
 
   // Chapter 13에서 추가:
   // hooks?: { preToolUse?: Hook[]; postToolUse?: Hook[] };
@@ -89,6 +99,43 @@ export async function executeTool(
       duration: Date.now() - startTime,
       stage: "validate",
     };
+  }
+
+  // ── [2.5] Permission Check ──────────────────────────
+  if (options.permissionConfig) {
+    const decision = checkPermission(
+      tool,
+      parsed.data as Record<string, unknown>,
+      options.permissionConfig,
+    );
+
+    if (decision.type === "deny") {
+      return {
+        content: `Permission denied for ${name}: ${decision.reason}`,
+        isError: true,
+        duration: Date.now() - startTime,
+        stage: "permission",
+      };
+    }
+
+    if (decision.type === "ask" && options.onPermissionRequest) {
+      const response = await options.onPermissionRequest(
+        tool,
+        parsed.data as Record<string, unknown>,
+        decision.reason,
+      );
+
+      if (response === "deny") {
+        return {
+          content: `Permission denied by user for ${name}`,
+          isError: true,
+          duration: Date.now() - startTime,
+          stage: "permission",
+        };
+      }
+
+      // "always_allow"는 호출자(query.ts)가 규칙에 추가하도록 처리
+    }
   }
 
   // ── [3] Execute ─────────────────────────────────────
